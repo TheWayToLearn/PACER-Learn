@@ -62,9 +62,25 @@
   .v-content img { display:block; max-width:none; }
   .v-content svg { display:block; background:var(--bg); border-radius:6px; }
   .v-nav { position:absolute; top:50%; transform:translateY(-50%); background:rgba(0,0,0,.5); color:#fff;
-           border:none; font-size:2rem; padding:.4rem .7rem; cursor:pointer; border-radius:6px; }
+           border:none; font-size:2rem; padding:.4rem .7rem; cursor:pointer; border-radius:6px;
+           touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
   .v-nav.prev { left:.5rem; } .v-nav.next { right:.5rem; }
   .v-nav[hidden] { display:none; }
+  /* 手機／觸控：工具列與換圖鍵要夠大才點得到（48px 以上），換圖鍵移到底部拇指區 */
+  @media (hover:none), (max-width:640px) {
+    .v-bar { flex-wrap:wrap; gap:.5rem; padding:.5rem .6rem calc(.5rem + env(safe-area-inset-top)); }
+    .v-bar .cap { order:3; flex:1 0 100%; white-space:normal; font-size:.8rem; line-height:1.3;
+                  max-height:2.6em; overflow:hidden; }
+    .v-bar button { min-width:3rem; min-height:3rem; font-size:1.15rem; padding:.3rem .5rem;
+                    background:rgba(255,255,255,.18); }
+    .v-bar button[data-act="close"] { margin-left:auto; }
+    .v-nav { top:auto; bottom:calc(1rem + env(safe-area-inset-bottom)); transform:none;
+             width:3.4rem; height:3.4rem; padding:0; border-radius:50%; font-size:2rem; line-height:1;
+             background:rgba(0,0,0,.6); }
+    .v-nav.prev { left:1rem; } .v-nav.next { right:1rem; }
+  }
+  .v-bar button, .v-nav { touch-action:manipulation; }
+  .v-bar button:active, .v-nav:active { background:rgba(255,255,255,.35); }
 
   /* 勘誤／過時：plan.html 與 atlas.html 共用同一套外觀
      紅八角 = 確定錯誤／已過時；橘三角 = 見仁見智 */
@@ -92,6 +108,22 @@
   table.issues-sum .lv svg { width:.95em; height:.95em; }
   table.issues-sum tr.wrong .lv { color:var(--wrong); } table.issues-sum tr.debatable .lv { color:var(--debat); }
   table.issues-sum .ev { font-size:.85rem; color:var(--muted); }
+  .tscroll { overflow-x:auto; }
+  /* 手機：三欄表格一定爆版（段落＋整句原話＋說明），改成一筆一張卡、直向堆疊，不橫捲 */
+  @media (max-width:640px) {
+    .tscroll { overflow-x:visible; }
+    table.issues-sum, table.issues-sum tbody, table.issues-sum tr, table.issues-sum td { display:block; width:auto; }
+    table.issues-sum tr:first-child { display:none; }        /* 欄位標題：卡片版用不到 */
+    table.issues-sum tr { border:1px solid var(--line); border-left-width:4px; border-radius:8px;
+                          background:var(--card); padding:.5rem .7rem; margin:.5rem 0; }
+    table.issues-sum tr.wrong { border-left-color:var(--wrong); }
+    table.issues-sum tr.debatable { border-left-color:var(--debat); }
+    table.issues-sum td { border:0; padding:.1rem 0; max-width:none; overflow-wrap:anywhere; }
+    table.issues-sum tr.wrong td:first-child, table.issues-sum tr.debatable td:first-child { border-left:0; }
+    table.issues-sum td:first-child { font-weight:600; }
+    table.issues-sum td.q { font-weight:400; margin:.35rem 0; padding-left:.6rem;
+                            border-left:2px solid var(--line); }
+  }
 
 {% block css %}{% endblock %}
 </style>
@@ -211,8 +243,16 @@
       img.src = it.src;
     }
   };
-  const open = (items, i = 0) => { V.items = items; V.el.hidden = false; document.body.style.overflow = "hidden"; show(i); };
-  const close = () => { V.el.hidden = true; document.body.style.overflow = ""; V.content.replaceChildren(); };
+  const hide = () => { V.el.hidden = true; document.body.style.overflow = ""; V.content.replaceChildren(); };
+  /* 手機的「上一頁」要關掉圖片檢視，而不是離開這一頁：開圖時推一筆 history，
+     關圖時退回去。popstate 只負責收起畫面，不可以再 back 一次。 */
+  let pushed = false;
+  const open = (items, i = 0) => {
+    V.items = items; V.el.hidden = false; document.body.style.overflow = "hidden"; show(i);
+    if (!pushed) { history.pushState({ viewer: 1 }, ""); pushed = true; }
+  };
+  const close = () => { if (pushed) history.back(); else hide(); };
+  addEventListener("popstate", () => { pushed = false; if (!V.el.hidden) hide(); });
 
   V.el.addEventListener("click", (e) => {
     const act = e.target.closest("[data-act]")?.dataset.act;
@@ -226,13 +266,43 @@
     const r = V.stage.getBoundingClientRect();
     zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - r.left, e.clientY - r.top);
   }, { passive: false });
-  let drag = null;
+  /* 一指拖曳、兩指縮放（.v-stage 是 touch-action:none，所以捏合要自己算） */
+  const pts = new Map();
+  let drag = null, pinch = null;
+  const mid = () => {
+    const [a, b] = [...pts.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
+  };
+  const startDrag = (pt) => { drag = { x: pt.x - V.tx, y: pt.y - V.ty }; V.stage.classList.add("drag"); };
+  const startPinch = () => {
+    const r = V.stage.getBoundingClientRect(), m = mid();
+    pinch = { d: m.d, cx: m.x - r.left, cy: m.y - r.top, s: V.s, tx: V.tx, ty: V.ty, r };
+    drag = null; V.stage.classList.remove("drag");
+  };
   V.stage.addEventListener("pointerdown", (e) => {
     if (e.target.closest("button")) return;
-    drag = { x: e.clientX - V.tx, y: e.clientY - V.ty }; V.stage.classList.add("drag"); V.stage.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    V.stage.setPointerCapture(e.pointerId);
+    if (pts.size === 2) startPinch();
+    else if (pts.size === 1) startDrag({ x: e.clientX, y: e.clientY });
   });
-  V.stage.addEventListener("pointermove", (e) => { if (drag) { V.tx = e.clientX - drag.x; V.ty = e.clientY - drag.y; apply(); } });
-  V.stage.addEventListener("pointerup", () => { drag = null; V.stage.classList.remove("drag"); });
+  V.stage.addEventListener("pointermove", (e) => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pts.size >= 2) {
+      const m = mid(), ns = Math.min(20, Math.max(0.05, pinch.s * (m.d / pinch.d)));
+      V.tx = (m.x - pinch.r.left) - (pinch.cx - pinch.tx) * (ns / pinch.s);
+      V.ty = (m.y - pinch.r.top) - (pinch.cy - pinch.ty) * (ns / pinch.s);
+      V.s = ns; apply();
+    } else if (drag) { V.tx = e.clientX - drag.x; V.ty = e.clientY - drag.y; apply(); }
+  });
+  const liftPointer = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 1) startDrag([...pts.values()][0]);      // 放開一指，剩下那指接著拖
+    else if (pts.size === 0) { drag = null; V.stage.classList.remove("drag"); }
+  };
+  V.stage.addEventListener("pointerup", liftPointer);
+  V.stage.addEventListener("pointercancel", liftPointer);
   V.stage.addEventListener("dblclick", (e) => { const r = V.stage.getBoundingClientRect(); zoomAt(1.6, e.clientX - r.left, e.clientY - r.top); });
   addEventListener("keydown", (e) => {
     if (V.el.hidden) return;

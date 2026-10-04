@@ -264,7 +264,7 @@
 {% if all_issues %}
 <h4>{{ S.issues_sum }}</h4>
 <p class="err-legend"><span class="w">{{ ic.danger() }}{{ S.lvl_wrong }}</span><span class="d">{{ ic.warn() }}{{ S.lvl_debatable_long }}</span></p>
-<div style="overflow-x:auto"><table class="issues-sum">
+<div class="tscroll"><table class="issues-sum">
 <tr><th>{{ S.col_seg }}</th><th>{{ S.col_quote }}</th><th>{{ S.col_note }}</th></tr>
 {% for v in videos %}{% for iss in v.issues %}
 <tr class="{{ iss.level }}"><td><span class="lv">{{ ic.level(iss.level) }}</span><a href="#{{ v.id }}-s{{ iss.seg_id }}">{{ iss.seg_id }}. {{ iss.seg_title }}</a><br><span class="muted">{{ iss.t_label }}</span></td>
